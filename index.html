@@ -56,7 +56,7 @@
     <div class="controls">
       <div class="btnrow">
         <button class="ghost" id="bPrev">⏮ 上一步</button>
-        <button id="bPlay">⏸ 暂停</button>
+        <button id="bPlay">▶ 播放</button>
         <button class="ghost" id="bNext">下一步 ⏭</button>
         <button class="ghost" id="bReset">↺</button>
       </div>
@@ -94,9 +94,10 @@ const STEPS=[
  {t:'下沉沉积 → 多层沉积岩',d:'地壳下沉至海平面以下，在夷平面之上接受新一轮沉积，形成多套水平沉积层，与下伏老岩层呈不整合接触。',c:'下沉·沉积'},
  {t:'地壳抬升 → 伸展减薄 → 地堑',d:'地壳再次缓慢抬升，背斜核部物质向两侧塑性流动、褶皱整体向外扩展（超出画面不显示），上覆水平岩层受拉伸减薄；随后区域拉张应力使每侧形成三条相向倾斜的正断层，呈阶梯状，中心断裂岩块沿断面向下滑动（两侧地壳保持不动），形成地堑构造。',c:'抬升·伸展·地堑'}
 ];
-let step=0, T=0, playing=true, speed=1;
+let step=0, T=0, playing=false, speed=1;   // 打开时静止（不自动播放）
 const ANIM=4.5, STEP_LEN=7.5;
 const animLen=s=>s===4?6.4:((s===0||s===3)?6.0:ANIM);  // 第1步/第4步逐层颗粒沉积与末步断裂均更慢
+T=0;                                                   // 初始画面：空白水体（岩层尚未沉积），点播放才开始
 
 /* ---------- 工具 ---------- */
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
@@ -561,10 +562,10 @@ STEPS.forEach((s,i)=>{
   const tt=document.createElement('span');tt.className='tt';tt.textContent=s.t;
   const dd=document.createElement('div');dd.className='dd';dd.textContent=s.d;
   c.appendChild(no);c.appendChild(tt);c.appendChild(dd);
-  c.onclick=()=>go(i);
+  c.onclick=()=>jump(i);
   stepsEl.appendChild(c);
   const ch=document.createElement('span');ch.className='chip';ch.textContent=s.c;
-  ch.onclick=()=>go(i);chipsEl.appendChild(ch);
+  ch.onclick=()=>jump(i);chipsEl.appendChild(ch);
   if(i<STEPS.length-1){const a=document.createElement('span');a.className='arrow';a.textContent='→';chipsEl.appendChild(a);}
 });
 function onStep(){
@@ -577,11 +578,19 @@ function onStep(){
   }
 }
 function go(s){step=clamp(s,0,STEPS.length-1);T=0;PARTS.length=0;spawnAcc=0;onStep();}
-document.getElementById('bPrev').onclick=()=>go(step-1);
-document.getElementById('bNext').onclick=()=>go(step+1);
-document.getElementById('bReset').onclick=()=>go(0);
+/* 手动切步（卡片/箭头）：静止状态下直接显示该阶段完成后的画面 */
+function jump(s){go(s);if(!playing)T=animLen(step);}
+document.getElementById('bPrev').onclick=()=>jump(step-1);
+document.getElementById('bNext').onclick=()=>jump(step+1);
+document.getElementById('bReset').onclick=()=>{go(0);playing=false;bPlay.textContent='▶ 播放';};
 const bPlay=document.getElementById('bPlay');
-bPlay.onclick=()=>{playing=!playing;bPlay.textContent=playing?'⏸ 暂停':'▶ 播放';};
+bPlay.onclick=()=>{
+  if(!playing){
+    if(T>=animLen(step)-0.01)T=0;      // 已静止在该阶段终态：从头播放本阶段
+    playing=true;
+  }else playing=false;
+  bPlay.textContent=playing?'⏸ 暂停':'▶ 播放';
+};
 const spd=document.getElementById('spd');
 spd.oninput=()=>{speed=parseFloat(spd.value);document.getElementById('spdV').textContent=speed.toFixed(1)+'×';};
 
