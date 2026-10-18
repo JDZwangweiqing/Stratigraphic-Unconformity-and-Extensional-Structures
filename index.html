@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>地质构造演化：从水平岩层到地堑</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;background:#f4f7fb;color:#26313e;
+       display:flex;justify-content:center;padding:18px 14px;}
+  .wrap{display:flex;gap:16px;align-items:flex-start;max-width:1340px;width:100%;}
+  .main{flex:1;min-width:0;}
+  h1{font-size:20px;margin-bottom:10px;color:#1d3a57;}
+  .stage{border-radius:12px;overflow:hidden;box-shadow:0 4px 18px rgba(30,60,100,.14);background:#fafcfd;line-height:0;}
+  canvas{width:100%;height:auto;display:block;}
+  .caption{margin-top:10px;background:#ffffff;border:1px solid #dde6ef;border-radius:10px;
+           padding:10px 14px;font-size:14px;line-height:1.6;box-shadow:0 2px 8px rgba(30,60,100,.06);}
+  .caption b{color:#0f4c81;margin-right:10px;font-size:15px;}
+  .chips{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px;}
+  .chip{padding:5px 12px;border-radius:999px;background:#e8eef6;border:1px solid #d3dfea;color:#4a5b6e;transition:all .3s;}
+  .chip.on{background:#0f4c81;color:#fff;border-color:#0f4c81;font-weight:600;}
+  .arrow{color:#9db1c5;font-weight:700;}
+  .panel{width:318px;flex-shrink:0;display:flex;flex-direction:column;gap:12px;}
+  .steps{display:flex;flex-direction:column;gap:8px;}
+  .card{background:#fff;border:1.5px solid #dde6ef;border-radius:11px;padding:10px 12px;cursor:pointer;transition:all .25s;}
+  .card:hover{border-color:#9fc3e0;}
+  .card.on{border-color:#0f4c81;background:#eef5fc;box-shadow:0 2px 10px rgba(15,76,129,.12);}
+  .card .no{display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;
+            background:#c8d6e4;color:#fff;font-size:13px;font-weight:700;margin-right:8px;}
+  .card.on .no{background:#0f4c81;}
+  .card .tt{font-size:14.5px;font-weight:700;color:#1d3a57;}
+  .card .dd{font-size:12.5px;color:#5c6d80;margin-top:4px;line-height:1.55;}
+  .controls{background:#fff;border:1px solid #dde6ef;border-radius:11px;padding:12px;display:flex;
+            flex-direction:column;gap:10px;}
+  .btnrow{display:flex;gap:8px;}
+  button{flex:1;padding:9px 0;border:none;border-radius:9px;background:#0f4c81;color:#fff;
+         font-size:14px;font-weight:600;cursor:pointer;transition:background .2s;}
+  button:hover{background:#1467ab;}
+  button.ghost{background:#e8eef6;color:#31506e;}
+  button.ghost:hover{background:#d7e3f0;}
+  .spd{display:flex;align-items:center;gap:10px;font-size:13px;color:#4a5b6e;}
+  .spd input{flex:1;accent-color:#0f4c81;}
+  .spd b{min-width:42px;text-align:right;color:#0f4c81;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="main">
+    <h1>地质构造演化：从水平岩层到地堑</h1>
+    <div class="stage"><canvas id="cv"></canvas></div>
+    <div class="caption"><b id="capT"></b><span id="capD"></span></div>
+    <div class="chips" id="chips"></div>
+  </div>
+  <aside class="panel">
+    <div class="steps" id="steps"></div>
+    <div class="controls">
+      <div class="btnrow">
+        <button class="ghost" id="bPrev">⏮ 上一步</button>
+        <button id="bPlay">⏸ 暂停</button>
+        <button class="ghost" id="bNext">下一步 ⏭</button>
+        <button class="ghost" id="bReset">↺</button>
+      </div>
+      <div class="spd"><span>速度</span><input type="range" id="spd" min="0.5" max="2" step="0.25" value="1"><b id="spdV">1.0×</b></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+"use strict";
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+const W=960,H=560,DPR=Math.min(window.devicePixelRatio||1,2);
+cv.width=W*DPR; cv.height=H*DPR; cv.style.width='100%'; ctx.scale(DPR,DPR);
+
+/* ---------- 几何常量（世界坐标，y 向下） ---------- */
+const SEAY=160;                       // 海平面（侵蚀基准面）
+const I=[280,314,350,383,418,452,488]; // 岩层界面：6 层厚度相近的随机层厚（34/36/33/35/34/36）
+const COLS=['#a3ccd4','#de9940','#d5d533','#17973d','#7d5ba6','#c46f4a'];
+const SEDCOLS=['#8fa3b0','#c9b896','#e3d9c2'];
+const AMP=45, LAM=430;                // 褶皱振幅 / 波长
+const UP=188;                         // 抬升量
+const PLAN=156;                       // 夷平面高程（侵蚀下切至接近侵蚀基准面）
+const SD=140;                         // 下沉量
+const F=[232,202,162];                // 三层新沉积层顶面（Ⅰ:232-260 Ⅱ:202-232 Ⅲ:162-202，不等厚）
+const DG=54, SL=0.28;                   // 地堑：内侧主断层总断距 / 视倾角斜率
+const BOUNDS=[-10,230,295,360,600,665,730,970]; // 断面地表位置（间距65px，中部间隔240px=加倍），首尾为画布边界
+const DROPS=[0,16,34,54,34,16,0];       // 各断块累计断距（阶梯状，两侧对称）
+const U2=62, SP=100;                    // 再次抬升量 / 褶皱向外扩展位移
+
+/* ---------- 状态 ---------- */
+const STEPS=[
+ {t:'水平岩层',d:'构造稳定环境下连续沉积，形成水平的沉积岩层（层理）。这是后续所有构造变形的物质基础。',c:'水平沉积'},
+ {t:'水平挤压 → 褶皱',d:'水平挤压应力使刚性岩层弯曲变形，形成背斜与向斜相间的褶皱构造。',c:'挤压褶皱'},
+ {t:'抬升侵蚀 → 夷平面',d:'褶皱岩层抬升高出侵蚀基准面（海平面），外力风化剥蚀"削高补低"，把山地夷平为准平原——夷平面。',c:'抬升·夷平'},
+ {t:'下沉沉积 → 多层沉积岩',d:'地壳下沉至海平面以下，在夷平面之上接受新一轮沉积，形成多套水平沉积层，与下伏老岩层呈不整合接触。',c:'下沉·沉积'},
+ {t:'地壳抬升 → 伸展减薄 → 地堑',d:'地壳再次缓慢抬升，背斜核部物质向两侧塑性流动、褶皱整体向外扩展（超出画面不显示），上覆水平岩层受拉伸减薄；随后区域拉张应力使每侧形成三条相向倾斜的正断层，呈阶梯状，中心断裂岩块沿断面向下滑动（两侧地壳保持不动），形成地堑构造。',c:'抬升·伸展·地堑'}
+];
+let step=0, T=0, playing=true, speed=1;
+const ANIM=4.5, STEP_LEN=7.5;
+const animLen=s=>s===4?6.4:((s===0||s===3)?6.0:ANIM);  // 第1步/第4步逐层颗粒沉积与末步断裂均更慢
+
+/* ---------- 工具 ---------- */
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const eo=x=>1-Math.pow(1-clamp(x,0,1),3);
+const eio=x=>0.5-0.5*Math.cos(Math.PI*clamp(x,0,1));   // 缓入缓出，垂直构造运动更协调
+const sm=x=>{x=clamp(x,0,1);return x*x*(3-2*x);};
+const fs=x=>-Math.cos(2*Math.PI*(x-480)/LAM);
+const lerp=(a,b,t)=>a+(b-a)*t;
+
+/* 阶段参数 */
+function params(){
+  const p=clamp(T/animLen(step),0,1);
+  return {
+    p,
+    dep:   step===0?eio(p):(step>0?1:0),                               // 第1步：岩层自下而上缓慢沉积形成
+    foldA: step<1?0:(step===1?AMP*eo(p):AMP),
+    up:    step<2?0:(step===2?UP*eio(Math.min(1,p/0.6)):UP),
+    clipP: step<2?0:(step===2?sm((p-0.6)/0.4):1),
+    Sd:    step<3?0:(step===3?SD*eio(Math.min(1,p/0.55)):SD),
+    dpp:   step<3?0:(step===3?sm((p-0.55)/0.45)*3:3),
+    /* 末步（合并）：先抬升+伸展减薄，随后张力断裂成堑 */
+    up2:   step<4?0:(step===4?U2*eio(clamp(p/0.42,0,1)):U2),          // 再次抬升
+    sp:    step<4?0:(step===4?sm(clamp((p-0.26)/0.44,0,1)):1),         // 褶皱向外扩展进度
+    Dg:    step<4?0:DG*eio(clamp((p-0.5)/0.5,0,1))                     // 张力断裂（后半程）
+  };
+}
+let P=params();
+
+/* 地堑：刚体断块模型——每个断块沿断面整体平移，用断面多边形裁剪绘制，
+   保证岩层断面严格紧贴断层线（无缝隙、无拖曳偏移） */
+function bx(i,y){ // 第 i 条边界在深度 y 处的 x（1~6 为断面，0/7 为画布边界）
+  if(i<=0)return -10;
+  if(i>=7)return W+10;
+  return BOUNDS[i]+(i<=3?1:-1)*(y-162)*SL;
+}
+function yInt(j,x){ // 第 j 个岩层界面（未含断块位移；含抬升/断陷与褶皱外扩重映射）
+  const Ae=P.foldA*(1-0.3*P.sp);       // 顶部拉伸：背斜振幅略降（核部物质外流）
+  return I[j]+Ae*fs(xs(x))-P.up+P.Sd-P.up2;
+}
+/* 锯齿状起伏（夷平面最终形态，±7px） */
+function jag(x){ return 4*Math.sin(x/53)+3*Math.sin(x/29+1.7); }
+function clipSurf(x){ // 侵蚀面：差异化剥蚀（背斜快、向斜慢），最终为锯齿状夷平面
+  if(step<2)return -1e9;
+  const base=PLAN+P.Sd-P.up2;
+  if(step===2)return lerp(yInt(0,x), base+jag(x), sm(P.clipP));
+  return base+jag(x);
+}
+function gSurf(x){ // 剥蚀后基岩面（夷平面）
+  return Math.max(yInt(0,x), clipSurf(x));
+}
+/* 伸展位移场：褶皱由中心向两侧运动（超出窗口自然裁剪） */
+function r0(a){ return sm(clamp((a-30)/210,0,1)); }
+function xs(x){ // 绘制坐标 → 物质源坐标：两翼向外迁移
+  if(P.sp<=0)return x;
+  const d=x-480;
+  return 480+d-Math.sign(d)*SP*P.sp*r0(Math.abs(d));
+}
+function rockTop(x){ return gSurf(x); }
+
+/* 三层新沉积层的顶/底面几何（供绘制与颗粒沉积共用） */
+function sedGeom(){
+  const U=P.up2, th=1-0.42*P.sp;
+  const b0=x=>rockTop(x);
+  const t0=x=>{const b=rockTop(x);return b-(b-(F[0]-U))*th;};
+  const b1=t0, t1=x=>t0(x)-(F[0]-F[1])*th;
+  const b2=t1, t2=x=>t1(x)-(F[1]-F[2])*th;
+  return [{bot:b0,top:t0},{bot:b1,top:t1},{bot:b2,top:t2}];
+}
+/* 各层颗粒堆积进度：先进先出，逐层堆积（底→顶） */
+function fillFracs(){
+  if(step===0){
+    const depP=P.dep*COLS.length, r=[];
+    for(let i=0;i<COLS.length;i++)r[i]=clamp(depP-(COLS.length-1-i),0,1);
+    return r;                       // 索引 i：0=顶层 … 6=底层
+  }
+  if(step===3){
+    const pk=[clamp(P.dpp,0,1),clamp(P.dpp-1,0,1),clamp(P.dpp-2,0,1)];
+    return pk;                      // 索引 k：0=沉积层Ⅰ（最下）
+  }
+  return null;
+}
+/* 当前正在堆积的那一层（供颗粒雨使用）：返回表面高度函数与颗粒颜色 */
+function depoActive(){
+  const fr=fillFracs();
+  if(!fr)return null;
+  if(step===0){
+    let done=true, act=null;
+    for(let i=COLS.length-1;i>=0;i--){
+      const f=fr[i];
+      if(f>0&&f<0.999){
+        done=false;
+        const ff=sm(f), yb=x=>yInt(i+1,x), yt=x=>yInt(i,x);
+        act={surf:x=>lerp(yb(x),yt(x),ff), color:COLS[i]};
+        break;
+      }
+    }
+    if(act)return act;
+    if(done){   // 全部堆积完成：残余颗粒落到岩层堆顶面
+      const yt=x=>yInt(0,x);
+      return {surf:yt, color:COLS[0]};
+    }
+    return null;
+  }
+  const G=sedGeom();
+  for(let k=0;k<3;k++){
+    const f=fr[k];
+    if(f>0&&f<0.999){
+      const ff=sm(clamp(f*1.18,0,1)), g=G[k];
+      return {surf:x=>lerp(g.bot(x),g.top(x),ff), color:SEDCOLS[k]};
+    }
+  }
+  if(fr[2]>0){  // 三层全部完成：残余颗粒落到沉积层Ⅲ顶面
+    return {surf:G[2].top, color:SEDCOLS[2]};
+  }
+  return null;
+}
+
+/* 绘制一套完整地层（岩层+沉积层+不整合面），整体竖向平移 off；
+   在地堑阶段被各断块的裁剪区分别调用 */
+function drawStrata(off){
+  const pk=[clamp(P.dpp,0,1),clamp(P.dpp-1,0,1),clamp(P.dpp-2,0,1)];
+  /* 第1步：七层岩层自下而上逐层堆积形成——
+     每层先由颗粒自基准面坠落、在层底堆高，堆满后用实线勾出层理 */
+  const frArr=fillFracs(), META='rgba(25,38,50,.55)';
+  const fr0=i=>(step===0&&frArr)?frArr[i]:1;   // 只有第1步使用逐层堆积进度，其余步骤岩层均已完成
+  for(let i=COLS.length-1;i>=0;i--){
+    const f=fr0(i);
+    if(f<=0.004)continue;
+    const ff=sm(f);
+    const yb=x=>Math.max(yInt(i+1,x),clipSurf(x));
+    const yt=x=>Math.max(yInt(i,x),clipSurf(x));
+    layerPath(x=>lerp(yb(x),yt(x),ff)+off, x=>yb(x)+off);
+    ctx.save();ctx.globalAlpha*=0.8;            // 沉积岩层颜色透明度 80%
+    ctx.fillStyle=COLS[i];ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle='rgba(35,45,55,.2)';ctx.lineWidth=1;ctx.stroke();
+    if(f>0.985){   // 该层堆积完成：以实线明确勾出岩层
+      ctx.strokeStyle=META;ctx.lineWidth=1.4;
+      ctx.beginPath();
+      for(let x=0;x<=W;x+=2){const y=yt(x)+off;x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+      ctx.stroke();
+    }
+  }
+  /* 新沉积层：同样由颗粒自基准面坠落、在底面之上堆高成层（逐层形成，不等厚）；
+     抬升伸展期受均匀拉伸减薄——底面贴住不整合面，顶部整体均匀降低 */
+  const G=sedGeom();
+  for(let k=0;k<3;k++){
+    if(pk[k]<=0.004)continue;
+    const f=sm(clamp(pk[k]*1.18,0,1));       // 该层颗粒堆积进度
+    const g=G[k];
+    layerPath(x=>lerp(g.bot(x),g.top(x),f)+off, x=>g.bot(x)+off);
+    ctx.fillStyle=SEDCOLS[k];ctx.fill();
+    ctx.strokeStyle='rgba(35,45,55,.2)';ctx.lineWidth=1;ctx.stroke();
+    if(pk[k]>0.985){                          // 堆积完成：实线勾出层理
+      ctx.strokeStyle=META;ctx.lineWidth=1.4;
+      ctx.beginPath();
+      for(let x=0;x<=W;x+=2){const y=g.top(x)+off;x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+      ctx.stroke();
+    }
+  }
+  /* 不整合面虚线（沉积覆盖后老岩层顶面，随断块一起平移） */
+  if(P.dpp>0.4){
+    const ua=sm((P.dpp-0.4)/0.6);
+    ctx.save();ctx.globalAlpha*=ua;
+    ctx.setLineDash([6,5]);ctx.strokeStyle='#7a4a1f';ctx.lineWidth=2;
+    ctx.beginPath();
+    for(let x=-10;x<=W+10;x+=3){const y=rockTop(x)+off;x===-10?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+    ctx.stroke();ctx.restore();
+    txt('不整合面',108,rockTop(108)+off-9,{size:13,color:'#7a4a1f',alpha:ua});
+  }
+}
+
+/* ---------- 透明度组 ---------- */
+const AL={};
+function sa(k,tg,adt){ if(!(k in AL))AL[k]=tg; AL[k]+=(tg-AL[k])*(1-Math.exp(-adt*5)); }
+
+/* ---------- 绘制原语 ---------- */
+function arrow(x1,y1,x2,y2,color,w){
+  ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=w||4;
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  const a=Math.atan2(y2-y1,x2-x1),s=(w||4)*2.4;
+  ctx.beginPath();ctx.moveTo(x2,y2);
+  ctx.lineTo(x2-s*Math.cos(a-0.42),y2-s*Math.sin(a-0.42));
+  ctx.lineTo(x2-s*Math.cos(a+0.42),y2-s*Math.sin(a+0.42));
+  ctx.closePath();ctx.fill();
+}
+function txt(s,x,y,o){
+  o=o||{};ctx.save();
+  ctx.globalAlpha*=(o.alpha==null?1:o.alpha);
+  ctx.font=(o.weight||600)+' '+(o.size||14)+'px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle=o.color||'#333';ctx.textAlign=o.align||'left';ctx.textBaseline=o.base||'alphabetic';
+  ctx.fillText(s,x,y);ctx.restore();
+}
+function pill(s,x,y,o){
+  o=o||{};ctx.save();ctx.globalAlpha*=(o.alpha==null?1:o.alpha);
+  ctx.font='700 '+(o.size||15)+'px "Microsoft YaHei",sans-serif';
+  const w=ctx.measureText(s).width+20,h=(o.size||15)+12;
+  ctx.fillStyle=o.bg||'rgba(255,255,255,.9)';
+  ctx.beginPath();ctx.roundRect(x-w/2,y-h/2,w,h,8);ctx.fill();
+  ctx.strokeStyle=o.bd||'#c6d4e2';ctx.lineWidth=1;ctx.stroke();
+  ctx.fillStyle=o.color||'#c0392b';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(s,x,y+1);ctx.restore();
+}
+function layerPath(topFn,botFn){
+  ctx.beginPath();
+  for(let x=0;x<=W;x+=2){const y=topFn(x);x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+  for(let x=W;x>=0;x-=2){ctx.lineTo(x,botFn(x));}
+  ctx.closePath();
+}
+
+/* ---------- 沉积颗粒：从基准面高度像雪花一样坠落，触面即堆积 ---------- */
+const PARTS=[];
+let spawnAcc=0;
+function updateParts(dt,act){
+  if(dt>0&&act){
+    spawnAcc+=dt*190;                      // 每秒约 190 颗
+    while(spawnAcc>=1&&PARTS.length<540){
+      spawnAcc--;
+      PARTS.push({
+        x:Math.random()*(W+40)-20, y:SEAY+2,   // 颗粒正好从基准面（海平面）处出现
+        r:0.9+Math.random()*1.9,           // 颗粒大小随机
+        vy:190+Math.random()*190,          // 沉降速度随机（偏快，避免滞留水中）
+        vx:(Math.random()-0.5)*22,
+        c:act.color
+      });
+    }
+    if(spawnAcc>1)spawnAcc=0;
+  }
+  for(let i=PARTS.length-1;i>=0;i--){
+    const p=PARTS[i];
+    p.y+=p.vy*dt; p.x+=p.vx*dt;
+    const s=act?act.surf(p.x):H;           // 落到当前堆积面即并入岩层
+    if(p.y>=s||p.x<-30||p.x>W+30)PARTS.splice(i,1);
+  }
+}
+function drawParts(){
+  if(!PARTS.length)return;
+  ctx.save();
+  for(const p of PARTS){
+    ctx.globalAlpha=0.92;ctx.fillStyle=p.c;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,6.2832);ctx.fill();
+    ctx.globalAlpha=0.4;ctx.fillStyle='#ffffff';   // 颗粒高光
+    ctx.beginPath();ctx.arc(p.x-p.r*0.3,p.y-p.r*0.3,p.r*0.45,0,6.2832);ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ---------- 主绘制 ---------- */
+function draw(){
+  P=params();
+  const clipP=P.clipP;
+
+  /* 天空 + 海水（水在最底层，岩层覆盖后只露出水上部分） */
+  ctx.fillStyle='#fafcfd';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(116,170,214,0.5)';ctx.fillRect(0,SEAY,W,H-SEAY);
+
+  /* 正在坠落的沉积颗粒（画在地层之下：颗粒只会出现在水体中，绝不会叠在岩层上） */
+  drawParts();
+
+  /* 地层：未断裂时整体绘制；断裂后按断块刚体平移+断面裁剪（岩层紧贴断面） */
+  if(P.Dg<=0.01){
+    drawStrata(0);
+  }else{
+    /* 断块顶面高程（沉积层Ⅲ顶，随减薄系数），供"干燥地堑"天空填充用 */
+    const U=P.up2, th=1-0.42*P.sp;
+    const sedTopNow=x=>{
+      const b=rockTop(x);
+      const t1=b-(b-(F[0]-U))*th;
+      return t1-((F[0]-F[1])+(F[1]-F[2]))*th;
+    };
+    for(let b=0;b<7;b++){
+      const off=DROPS[b]*P.Dg/DG;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(bx(b,0),0);
+      ctx.lineTo(bx(b+1,0),0);
+      ctx.lineTo(bx(b+1,575),575);
+      ctx.lineTo(bx(b,575),575);
+      ctx.closePath();
+      ctx.clip();
+      drawStrata(off);
+      /* 地壳不下沉、海水不灌入：断块表面以上填天空色，地堑保持干燥，
+         呈现纯构造运动的"断块沿断面向下滑动" */
+      ctx.fillStyle='#fafcfd';
+      ctx.beginPath();
+      ctx.moveTo(-20,-20);
+      ctx.lineTo(W+20,-20);
+      for(let x=W+20;x>=-20;x-=2)ctx.lineTo(x,sedTopNow(x)+off);
+      ctx.closePath();
+      ctx.fill();
+      /* 断层线段画在断块裁剪内：上自本块地表、下止本块岩层底，绝不伸入水中 */
+      const aTenB=AL.ten||0;
+      if(aTenB>0.02){
+        const fp=P.Dg/DG;
+        ctx.save();ctx.globalAlpha*=aTenB;
+        ctx.strokeStyle='#e03131';ctx.lineWidth=2.5;
+        for(const i of [b,b+1]){
+          if(i<1||i>6)continue;
+          const dir=(i<=3)?1:-1;
+          let yEnd=540+off;                   // 迭代求本断块岩层底面（含褶皱起伏）
+          for(let it=0;it<8;it++){
+            const fx=BOUNDS[i]+dir*(yEnd-162)*SL;
+            yEnd=yInt(COLS.length,fx)+off;
+          }
+          let y0=yEnd;
+          for(let y=40;y<=yEnd;y+=2){         // 自上而下找本块地表出露点
+            const fx=BOUNDS[i]+dir*(y-162)*SL;
+            if(y>=sedTopNow(fx)+off-1){y0=y;break;}
+          }
+          const ye2=yEnd;                     // 断层一次性形成至最下方位置（不渐进生长）
+          if(ye2-y0>2){
+            ctx.beginPath();
+            ctx.moveTo(BOUNDS[i]+dir*(y0-162)*SL,y0);
+            ctx.lineTo(BOUNDS[i]+dir*(ye2-162)*SL,ye2);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+  }
+
+  /* 海平面虚线（即侵蚀基准面）：仅前四步显示 */
+  if(step<=3){
+    ctx.save();ctx.setLineDash([7,6]);ctx.strokeStyle='#3f7fb0';ctx.lineWidth=1.6;
+    ctx.beginPath();ctx.moveTo(0,SEAY);ctx.lineTo(W,SEAY);ctx.stroke();ctx.restore();
+    pill('侵蚀基准面',64,SEAY-15,{color:'#2d6a96',size:13});
+  }
+
+  /* 褶皱时期：挤压箭头 + 背斜向斜标注 */
+  const aComp=AL.comp||0;
+  if(aComp>0.02){
+    arrow(28,215,158,215,'#c0392b',5);arrow(932,215,802,215,'#c0392b',5);
+    txt('挤 压',92,200,{align:'center',color:'#a5301f',size:15,alpha:aComp});
+    txt('挤 压',868,200,{align:'center',color:'#a5301f',size:15,alpha:aComp});
+  }
+  const aFold=AL.fold||0;
+  if(aFold>0.02){
+    txt('背斜',480,Math.max(24,I[0]-P.foldA-P.up-14),{align:'center',color:'#7a4a12',size:15,alpha:aFold});
+    txt('向斜',265,I[0]+P.foldA-P.up+26,{align:'center',color:'#7a4a12',size:15,alpha:aFold});
+    txt('向斜',695,I[0]+P.foldA-P.up+26,{align:'center',color:'#7a4a12',size:15,alpha:aFold});
+  }
+
+  /* 抬升阶段箭头 */
+  const aUpl=AL.upl||0;
+  if(aUpl>0.02){
+    arrow(185,540,185,470,'#5c6d80',5);arrow(775,540,775,470,'#5c6d80',5);
+    txt('地壳抬升',185,556,{align:'center',size:13,color:'#48586a',alpha:aUpl});
+    txt('地壳抬升',775,556,{align:'center',size:13,color:'#48586a',alpha:aUpl});
+  }
+
+  /* 再次抬升 + 伸展减薄阶段箭头：岩层开始减薄时"地壳抬升"缓慢淡出 */
+  const aU2=AL.upl2||0;
+  if(aU2>0.02){
+    const aUplF=aU2*(1-sm(P.sp*2.2));            // 抬升箭头随伸展启动缓慢消失
+    const aSt=aU2*sm(clamp(P.sp*1.8,0,1));       // 伸展箭头随减薄同步淡入
+    if(aUplF>0.02){
+      arrow(185,540,185,470,'#5c6d80',5);arrow(775,540,775,470,'#5c6d80',5);
+      txt('地壳抬升',185,556,{align:'center',size:13,color:'#48586a',alpha:aUplF});
+      txt('地壳抬升',775,556,{align:'center',size:13,color:'#48586a',alpha:aUplF});
+    }
+    /* 水平伸展：褶皱与盖层由中心向两侧运动 */
+    if(aSt>0.02){
+      arrow(445,88,320,88,'#2b6cb0',4.5);arrow(515,88,640,88,'#2b6cb0',4.5);
+      txt('水平伸展 · 减薄',480,68,{align:'center',size:14,color:'#1d5a96',alpha:aSt});
+    }
+  }
+
+  /* 侵蚀阶段：差异化下切的侵蚀面虚线 + 剥蚀箭头 */
+  const aEro=AL.ero||0;
+  if(aEro>0.02&&step===2){
+    ctx.save();ctx.globalAlpha*=aEro;ctx.setLineDash([8,6]);ctx.strokeStyle='#7a5230';ctx.lineWidth=2;
+    ctx.beginPath();
+    for(let x=0;x<=W;x+=3){const y=clipSurf(x);x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+    ctx.stroke();ctx.restore();
+    pill('夷平面（削高补低）',150,64,{alpha:aEro,color:'#7a5230',size:14});
+    [150,480,910].forEach(x=>{const y=clipSurf(x);arrow(x,y-54,x,y-18,'#7a5230',3.5);});
+    txt('风化·剥蚀',480,clipSurf(480)-62,{align:'center',size:13,color:'#7a5230',alpha:aEro});
+  }
+
+  /* 沉积层标注 */
+  const aSed=AL.sed||0;
+  if(aSed>0.02){
+    const pk=[clamp(P.dpp,0,1),clamp(P.dpp-1,0,1),clamp(P.dpp-2,0,1)];
+    const names=['沉积层Ⅰ','沉积层Ⅱ','沉积层Ⅲ'];
+    const xR=946, Gs=sedGeom();   // 拉伸减薄后各层的实际位置
+    for(let k=0;k<3;k++){
+      if(pk[k]>0.95)txt(names[k],W-12,(Gs[k].bot(xR)+Gs[k].top(xR))/2+5,{align:'right',size:13,color:'#41566b',alpha:aSed});
+    }
+  }
+
+  /* 地堑阶段：断层线已在各断块裁剪内绘制；此处为断距箭头 + 张力箭头 */
+  const aTen=AL.ten||0;
+  if(aTen>0.02){
+    const fp=P.Dg/DG;                    // 断层发育进度（与断距同步）
+    const kk=P.Dg/DG;
+    const Gt=sedGeom()[2].top;           // 沉积层Ⅲ顶面（地形面）
+    /* 两盘相对运动箭头：平行于断面、位于岩层内部，六条断层均显示 */
+    const aA=aTen*clamp(fp*1.8,0,1);
+    if(aA>0.02){
+      ctx.save();ctx.globalAlpha*=aA;
+      const nrm=Math.hypot(1,SL);
+      for(let i=1;i<=6;i++){
+        const dir=(i<=3)?1:-1;
+        const offH=Math.min(DROPS[i-1],DROPS[i])*kk;   // 较高一盘的地表
+        let y0=600;
+        for(let y=40;y<=560;y+=2){
+          const fx=BOUNDS[i]+dir*(y-162)*SL;
+          if(y>=Gt(fx)+offH-1){y0=y;break;}
+        }
+        const ym=y0+30;                  // 箭头置于岩层内（地表以下）
+        if(ym>560-16)continue;
+        const ux=dir*SL/nrm, uy=1/nrm;                 // 沿倾向向下单位向量
+        const nhx=dir/nrm,  nhy=-SL/nrm;               // 指向下降盘的法向
+        const cx=BOUNDS[i]+dir*(ym-162)*SL, cy=ym;
+        /* 下降盘：沿断面向下 */
+        arrow(cx+nhx*13-16*ux, cy+nhy*13-16*uy, cx+nhx*13+16*ux, cy+nhy*13+16*uy, '#e03131', 3);
+        /* 上升盘：沿断面向上 */
+        arrow(cx-nhx*13+16*ux, cy-nhy*13+16*uy, cx-nhx*13-16*ux, cy-nhy*13-16*uy, '#e03131', 3);
+      }
+      ctx.restore();
+    }
+    pill('正断层',295,118,{alpha:aTen,color:'#c0392b',size:13});
+    pill('正断层',665,118,{alpha:aTen,color:'#c0392b',size:13});
+    /* 区域张力箭头（深部岩层之下） */
+    arrow(150,530,30,530,'#2b6cb0',5);arrow(810,530,930,530,'#2b6cb0',5);
+    txt('区域张力',88,552,{align:'center',size:14,color:'#1d5a96',alpha:aTen});
+    txt('区域张力',872,552,{align:'center',size:14,color:'#1d5a96',alpha:aTen});
+    pill('地 堑',480,198,{alpha:aTen,color:'#c0392b',size:16});
+  }
+}
+
+/* ---------- 主循环 ---------- */
+let last=performance.now();
+function frame(now){
+  let dt=Math.min((now-last)/1000,0.05);last=now;
+  const adt=playing?dt*speed:0;   // 暂停=冻结一切动画
+  if(playing){
+    T+=dt*speed;
+    if(T>STEP_LEN){T=0;go((step+1)%STEPS.length);}
+  }
+  P=params();
+  const p=P.p;
+  sa('comp',step===1?1:0,adt);
+  sa('fold',(step===1||(step===2&&P.clipP<0.5))?1:0,adt);
+  sa('upl',(step===2&&p<0.58)?1:0,adt);
+  sa('ero',(step===2&&P.clipP>0.05)?1:0,adt);
+  sa('sed',step>=3?1:0,adt);
+  sa('upl2',step===4?1:0,adt);               // 末步：抬升/伸展箭头由内部 sp 淡入淡出
+  sa('ten',(step===4&&P.Dg>0.6)?1:0,adt);    // 后半程：张力断裂成堑
+  updateParts(adt,depoActive());             // 颗粒沉积动画（暂停时冻结）
+  draw();
+  requestAnimationFrame(frame);
+}
+
+/* ---------- UI ---------- */
+const stepsEl=document.getElementById('steps'),chipsEl=document.getElementById('chips');
+STEPS.forEach((s,i)=>{
+  const c=document.createElement('div');c.className='card';
+  const no=document.createElement('span');no.className='no';no.textContent=i+1;
+  const tt=document.createElement('span');tt.className='tt';tt.textContent=s.t;
+  const dd=document.createElement('div');dd.className='dd';dd.textContent=s.d;
+  c.appendChild(no);c.appendChild(tt);c.appendChild(dd);
+  c.onclick=()=>go(i);
+  stepsEl.appendChild(c);
+  const ch=document.createElement('span');ch.className='chip';ch.textContent=s.c;
+  ch.onclick=()=>go(i);chipsEl.appendChild(ch);
+  if(i<STEPS.length-1){const a=document.createElement('span');a.className='arrow';a.textContent='→';chipsEl.appendChild(a);}
+});
+function onStep(){
+  document.getElementById('capT').textContent='阶段 '+(step+1)+'：'+STEPS[step].t;
+  document.getElementById('capD').textContent=STEPS[step].d;
+  const cards=stepsEl.children, chips=chipsEl.querySelectorAll('.chip');
+  for(let i=0;i<STEPS.length;i++){
+    if(i===step){cards[i].classList.add('on');chips[i].classList.add('on');}
+    else{cards[i].classList.remove('on');chips[i].classList.remove('on');}
+  }
+}
+function go(s){step=clamp(s,0,STEPS.length-1);T=0;PARTS.length=0;spawnAcc=0;onStep();}
+document.getElementById('bPrev').onclick=()=>go(step-1);
+document.getElementById('bNext').onclick=()=>go(step+1);
+document.getElementById('bReset').onclick=()=>go(0);
+const bPlay=document.getElementById('bPlay');
+bPlay.onclick=()=>{playing=!playing;bPlay.textContent=playing?'⏸ 暂停':'▶ 播放';};
+const spd=document.getElementById('spd');
+spd.oninput=()=>{speed=parseFloat(spd.value);document.getElementById('spdV').textContent=speed.toFixed(1)+'×';};
+
+onStep();
+requestAnimationFrame(frame);
+window._app={go:s=>go(s),setPlaying:v=>{playing=v;bPlay.textContent=playing?'⏸ 暂停':'▶ 播放';}};
+</script>
+</body>
+</html>
